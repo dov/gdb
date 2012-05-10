@@ -66,9 +66,18 @@ mi_cmd_file_list_exec_source_file (char *command, char **argv, int argc)
 
 static void
 print_partial_file_name (const char *filename, const char *fullname,
-			 void *ignore)
+			 void *duplicate_htab)
 {
   struct ui_out *uiout = current_uiout;
+  const char **slot;
+
+  if (htab_find (duplicate_htab,(const void *) filename)!=NULL)
+    return;
+
+  // Insert the entry into the duplicate hash table
+  slot = (const char **) htab_find_slot (duplicate_htab, (const void *) filename,
+                                         INSERT);
+  *slot = filename;
 
   ui_out_begin (uiout, ui_out_type_tuple, NULL);
 
@@ -86,9 +95,17 @@ mi_cmd_file_list_exec_source_files (char *command, char **argv, int argc)
   struct ui_out *uiout = current_uiout;
   struct symtab *s;
   struct objfile *objfile;
+  const char **slot;
+  htab_t duplicate_htab;
 
   if (!mi_valid_noargs ("-file-list-exec-source-files", argc, argv))
     error (_("-file-list-exec-source-files: Usage: No args"));
+
+  /* A hash table for weeding out duplicate filenames */
+  duplicate_htab = htab_create_alloc (100, htab_hash_string,
+                                      (int (*) (const void *, 
+                                                const void *)) streq,
+                                      NULL, xcalloc, xfree);
 
   /* Print the table header.  */
   ui_out_begin (uiout, ui_out_type_list, "files");
@@ -98,7 +115,15 @@ mi_cmd_file_list_exec_source_files (char *command, char **argv, int argc)
   {
     ui_out_begin (uiout, ui_out_type_tuple, NULL);
 
+    if (htab_find (duplicate_htab,(const void *) s->filename)!=NULL)
+      continue;
+
     ui_out_field_string (uiout, "file", s->filename);
+
+    // Insert the entry into the hash table
+    slot = (const char **) htab_find_slot (duplicate_htab, (const void *) s->filename,
+                                           INSERT);
+    *slot = s->filename;
 
     /* Extract the fullname if it is not known yet.  */
     symtab_to_fullname (s);
@@ -109,8 +134,10 @@ mi_cmd_file_list_exec_source_files (char *command, char **argv, int argc)
     ui_out_end (uiout, ui_out_type_tuple);
   }
 
-  map_partial_symbol_filenames (print_partial_file_name, NULL,
+  map_partial_symbol_filenames (print_partial_file_name, duplicate_htab,
 				1 /*need_fullname*/);
 
   ui_out_end (uiout, ui_out_type_list);
+
+  htab_delete (duplicate_htab);
 }
